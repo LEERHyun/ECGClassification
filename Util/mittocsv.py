@@ -59,7 +59,7 @@ def create_single_record_csv(record_name, data_path, beat_length=260, before_r=9
     record = wfdb.rdrecord(data_path + record_name, smooth_frames=True)
     annotation = wfdb.rdann(data_path + record_name, 'atr')
     
-    # 신호 전처리
+    # 신호 전처리: Z-Score
     ecg_signal = record.p_signal[:, 0]
     processed_signal = preprocessing.scale(np.nan_to_num(ecg_signal))
     total_samples = len(processed_signal)
@@ -135,4 +135,5 @@ if __name__ == "__main__":
     create_all_csv_files(
         data_path=data_path,
         max_records=None
+
     )
