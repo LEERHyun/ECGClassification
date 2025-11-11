@@ -24,6 +24,229 @@ def get_segments(mask):
         segments.append((start, len(mask)))
     
     return segments
+def save_predictions_to_csv(model, csv_folder, device='cuda', output_dir='prediction_results'):
+    """
+    폴더 내 모든 CSV 파일들의 예측 결과를 CSV로 저장
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    model.to(device)
+    model.eval()
+    
+    # CSV 파일 찾기
+    csv_files = glob.glob(os.path.join(csv_folder, '*.csv'))
+    
+    # 클래스 매핑
+    class_to_idx = {
+        'Baseline': 0,
+        'Normal': 1,
+        'APB': 2,
+        'PVC': 3,
+        'LBBB': 4,
+        'RBBB': 5
+    }
+    
+    idx_to_class = {v: k for k, v in class_to_idx.items()}
+    
+    with torch.no_grad():
+        for csv_file in csv_files:
+            # CSV 로드
+            df = pd.read_csv(csv_file)
+            
+            # 신호와 라벨 추출
+            signal = df['signal_value'].values.astype(np.float32)
+            labels = df['beat_label'].map(class_to_idx).values
+            
+            # Tensor 변환
+            signal_tensor = torch.FloatTensor(signal).unsqueeze(0).unsqueeze(0).to(device)
+            
+            # 예측
+            output = model(signal_tensor)
+            prediction = output.argmax(dim=1).squeeze().cpu().numpy()
+            
+            # 예측 결과를 클래스 이름으로 변환
+            pred_labels = [idx_to_class[idx] for idx in prediction]
+            
+            # 결과 DataFrame 생성
+            result_df = df.copy()
+            result_df['predicted_label'] = pred_labels
+            
+            # CSV 저장
+            filename = os.path.basename(csv_file).replace('.csv', '_predictions.csv')
+            save_path = os.path.join(output_dir, filename)
+            result_df.to_csv(save_path, index=False)
+
+
+def visualize_from_csv_folder(model, csv_folder, device='cuda', output_dir='visualization_results'):
+    """
+    폴더 내 모든 CSV 파일들을 읽어서 시각화
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    model.to(device)
+    model.eval()
+    
+    # CSV 파일 찾기
+    csv_files = glob.glob(os.path.join(csv_folder, '*.csv'))
+    
+    # 클래스 매핑
+    class_to_idx = {
+        'Baseline': 0,
+        'Normal': 1,
+        'APB': 2,
+        'PVC': 3,
+        'LBBB': 4,
+        'RBBB': 5
+    }
+    
+    with torch.no_grad():
+        for idx, csv_file in enumerate(csv_files):
+            # CSV 로드
+            df = pd.read_csv(csv_file)
+            
+            # 신호와 라벨 추출
+            signal = df['signal_value'].values.astype(np.float32)
+            labels = df['beat_label'].map(class_to_idx).values
+            
+            # Tensor 변환
+            signal_tensor = torch.FloatTensor(signal).unsqueeze(0).unsqueeze(0).to(device)
+            
+            # 예측
+            output = model(signal_tensor)
+            prediction = output.argmax(dim=1).squeeze()
+            
+            # 시각화
+            filename = os.path.basename(csv_file).replace('.csv', '.png')
+            save_path = os.path.join(output_dir, filename)
+            
+            visualize_ecg_segmentation(
+                signal=signal,
+                true_mask=labels,
+                pred_mask=prediction.cpu().numpy(),
+                save_path=save_path,
+                sample_title=f'ECG Segmentation - {os.path.basename(csv_file)}',
+                figsize=(16, 8)
+            )
+
+
+def visualize_comparison_grid_from_csv(model, csv_folder, device='cuda', output_path='comparison_grid.png'):
+    """
+    폴더 내 모든 CSV 파일들을 그리드로 시각화
+    """
+    model.to(device)
+    model.eval()
+    
+    # CSV 파일 찾기
+    csv_files = glob.glob(os.path.join(csv_folder, '*.csv'))
+    
+    # 클래스 매핑
+    class_to_idx = {
+        'Baseline': 0,
+        'Normal': 1,
+        'APB': 2,
+        'PVC': 3,
+        'LBBB': 4,
+        'RBBB': 5
+    }
+    
+    # 샘플 수집
+    samples = []
+    with torch.no_grad():
+        for csv_file in csv_files:
+            df = pd.read_csv(csv_file)
+            signal = df['signal_value'].values.astype(np.float32)
+            labels = df['beat_label'].map(class_to_idx).values
+            
+            signal_tensor = torch.FloatTensor(signal).unsqueeze(0).unsqueeze(0).to(device)
+            output = model(signal_tensor)
+            prediction = output.argmax(dim=1).squeeze()
+            
+            samples.append({
+                'signal': signal,
+                'true_mask': labels,
+                'pred_mask': prediction.cpu().numpy()
+            })
+    
+    # 클래스 정보
+    class_colors = {
+        0: '#808080',
+        1: '#2ecc71',
+        2: '#3498db',
+        3: '#f39c12',
+        4: '#00d4ff',
+        5: '#e74c3c'
+    }
+    class_names = ['Baseline', 'Normal', 'APB', 'PVC', 'LBBB', 'RBBB']
+    
+    # Figure 생성
+    fig, axes = plt.subplots(len(samples), 2, figsize=(16, len(samples) * 2.5))
+    
+    if len(samples) == 1:
+        axes = axes.reshape(1, -1)
+    
+    for idx, sample in enumerate(samples):
+        signal = sample['signal']
+        true_mask = sample['true_mask']
+        pred_mask = sample['pred_mask']
+        
+        # Ground Truth
+        ax_true = axes[idx, 0]
+        ax_true.plot(signal, 'k-', linewidth=0.6, alpha=0.4)
+        
+        for class_idx in range(6):
+            mask = (true_mask == class_idx)
+            if np.any(mask):
+                segments = get_segments(mask)
+                for start, end in segments:
+                    ax_true.axvspan(start, end, color=class_colors[class_idx], alpha=0.5)
+                    mid = (start + end) // 2
+                    if end - start > 30:
+                        ax_true.text(mid, np.max(signal) * 0.5, class_names[class_idx][0],
+                                   ha='center', va='center', fontsize=8, fontweight='bold',
+                                   bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
+        
+        ax_true.set_ylabel(f'Sample {idx+1}', fontsize=10, fontweight='bold')
+        if idx == 0:
+            ax_true.set_title('Ground Truth', fontsize=12, fontweight='bold')
+        ax_true.set_xlim(0, len(signal))
+        ax_true.grid(True, alpha=0.2)
+        ax_true.set_xticks([])
+        ax_true.set_yticks([])
+        
+        # Prediction
+        ax_pred = axes[idx, 1]
+        ax_pred.plot(signal, 'k-', linewidth=0.6, alpha=0.4)
+        
+        for class_idx in range(6):
+            mask = (pred_mask == class_idx)
+            if np.any(mask):
+                segments = get_segments(mask)
+                for start, end in segments:
+                    ax_pred.axvspan(start, end, color=class_colors[class_idx], alpha=0.5)
+                    mid = (start + end) // 2
+                    if end - start > 30:
+                        ax_pred.text(mid, np.max(signal) * 0.5, class_names[class_idx][0],
+                                   ha='center', va='center', fontsize=8, fontweight='bold',
+                                   bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
+        
+        if idx == 0:
+            ax_pred.set_title('Prediction', fontsize=12, fontweight='bold')
+        ax_pred.set_xlim(0, len(signal))
+        ax_pred.grid(True, alpha=0.2)
+        ax_pred.set_xticks([])
+        ax_pred.set_yticks([])
+    
+    # 범례
+    legend_elements = [mpatches.Patch(facecolor=class_colors[i], alpha=0.5,
+                                     edgecolor='black', label=class_names[i])
+                      for i in range(1, 6)]
+    fig.legend(handles=legend_elements, loc='upper center',
+              bbox_to_anchor=(0.5, 0.99), ncol=5, fontsize=11, framealpha=0.9)
+    
+    plt.suptitle('ECG Segmentation Results', fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
 
 def visualize_ecg_segmentation(signal, true_mask, pred_mask, 
                                save_path='ecg_segmentation_result.png',
@@ -189,11 +412,18 @@ if __name__ == "__main__":
     csv_folder = r"C:\Users\Ahhyun\Desktop\Workplace\Code\ECGClassification\patched_data\Abnormal_beat"
     
     #샘플 시각화 후 저장
-    visualize_from_csv_folder(
+    """visualize_from_csv_folder(
         model=model,
         csv_folder=csv_folder,
         device=device,
         num_samples=4,
         output_dir='visualization_results'
+    )"""
+    
+    save_predictions_to_csv(
+        model=model,
+        csv_folder=csv_folder,
+        device=device,
+        output_dir='prediction_results'
     )
     
