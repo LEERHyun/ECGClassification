@@ -4,14 +4,7 @@ from Model.architecture import HybridNAFNet, HybridNAFNet_small
 
 
 def save_parameters_to_files(model, output_dir="Parameters"):
-    """
-    PyTorch 모델의 파라미터를 주어진 디렉토리 구조로 저장합니다.
-    특별히 qkv_dwconv와 conv2 모듈의 경우 4차원 텐서를 3차원으로 분리하여 저장합니다.
-    
-    Args:
-        model: PyTorch 모델
-        output_dir: 파라미터를 저장할 기본 디렉토리
-    """
+
     os.makedirs(output_dir, exist_ok=True)
     
     for name, param in model.named_parameters():
@@ -84,4 +77,5 @@ if __name__ == "__main__":
     model.to(device)
     model.eval()
     
+
     save_parameters_to_files(model)
